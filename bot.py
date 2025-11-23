@@ -6,7 +6,7 @@ import google.generativeai as genai
 import json
 import random
 import time
-from datetime import datetime
+import asyncio
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -21,202 +21,166 @@ if not GEMINI_API_KEY or not TELEGRAM_TOKEN:
     logger.error("❌ Environment variables missing!")
     exit(1)
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+logger.info(f"🔑 API Key: {GEMINI_API_KEY[:20]}...")
+
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    logger.info("✅ Gemini API configured successfully")
+except Exception as e:
+    logger.error(f"❌ Gemini API configuration failed: {e}")
+    exit(1)
 
 user_sessions = {}
 
-# Topic pools for variety
 ENGLISH_TOPICS = [
-    "Fill in the blanks with appropriate preposition",
-    "Identify grammatical error in sentence",
-    "Choose correct synonym",
-    "Choose correct antonym", 
-    "Idioms and phrases meaning",
-    "One word substitution",
-    "Sentence improvement",
-    "Active and passive voice conversion",
-    "Direct and indirect speech",
-    "Spellings - identify correct spelling",
-    "Sentence rearrangement",
-    "Cloze test",
-    "Reading comprehension based question",
-    "Para jumbles"
+    "synonyms", "antonyms", "idioms", "grammar", "spelling",
+    "sentence correction", "fill in blanks", "one word substitution"
 ]
 
 GK_TOPICS = [
-    "Indian Freedom Struggle and Freedom Fighters",
-    "Ancient Indian History - Mauryan, Gupta dynasty",
-    "Medieval Indian History - Mughal Empire",
-    "Modern Indian History - British Era",
-    "Indian Geography - Rivers, Mountains, States",
-    "World Geography - Countries, Capitals, Continents",
-    "Indian Polity - Constitution, Fundamental Rights",
-    "Indian Economy - GDP, Budget, Banking, RBI",
-    "General Science - Physics concepts",
-    "General Science - Chemistry concepts",
-    "General Science - Biology and Human body",
-    "Indian Art and Culture",
-    "Books and Authors - Indian",
-    "Important Awards - Bharat Ratna, Nobel Prize",
-    "Sports - Olympics, Cricket, Commonwealth Games",
-    "Important Days and Dates",
-    "Current Affairs - Last 6 months events",
-    "Famous Personalities of India",
-    "World Organizations - UN, WHO, UNESCO",
-    "Indian States - Capitals, CMs, Governors"
+    "Indian History", "Indian Geography", "Indian Polity",
+    "Indian Economy", "General Science", "Current Affairs",
+    "Awards", "Sports", "Books and Authors"
 ]
 
-class QuizGenerator:
-    @staticmethod
-    def generate_question(subject, user_id):
-        """Generate 100% AI questions - NO hardcoded fallbacks"""
+def clean_json_response(text):
+    """Clean and extract JSON from AI response"""
+    try:
+        # Remove markdown code blocks
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
         
-        # Add extreme randomness
-        timestamp = int(time.time())
-        random_number = random.randint(10000, 99999)
-        current_date = datetime.now().strftime("%Y%m%d%H%M%S")
+        # Find JSON object
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start != -1 and end > start:
+            text = text[start:end]
         
-        # Pick random topic for variety
-        if subject == "English":
-            random_topic = random.choice(ENGLISH_TOPICS)
+        # Clean up
+        text = text.strip()
+        return text
+    except Exception as e:
+        logger.error(f"Error cleaning JSON: {e}")
+        return text
+
+async def generate_with_retry(prompt, max_retries=3):
+    """Generate content with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"🤖 Generating content (attempt {attempt + 1}/{max_retries})")
             
-            prompt = f"""You are an expert SSC CGL/CHSL English exam question creator.
-
-CRITICAL INSTRUCTIONS:
-- Generate a COMPLETELY NEW and UNIQUE question
-- Question ID: {current_date}{random_number}
-- Topic: {random_topic}
-- Difficulty: SSC CGL Tier-1 level (Moderately Challenging)
-- Make it different from typical questions
-- Use varied sentence structures
-- Include contemporary examples
-
-Generate question on: {random_topic}
-
-Return ONLY valid JSON in this EXACT format (no extra text):
-{{
-    "question": "Your unique challenging question here",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correct": 0,
-    "explanation": "Clear explanation with grammar rules/reasoning"
-}}
-
-Remember: Make it CHALLENGING but FAIR. Real SSC exam level!"""
-        
-        else:  # GK
-            random_topic = random.choice(GK_TOPICS)
-            
-            prompt = f"""You are an expert SSC CGL/CHSL General Knowledge exam question creator.
-
-CRITICAL INSTRUCTIONS:
-- Generate a COMPLETELY NEW and UNIQUE question
-- Question ID: {current_date}{random_number}
-- Topic: {random_topic}
-- Difficulty: SSC CGL Tier-1 level (Moderately Challenging)
-- Make it BILINGUAL (Hindi | English)
-- Include specific facts, years, numbers
-- Use recent/updated information
-
-Generate question on: {random_topic}
-
-Return ONLY valid JSON in this EXACT format (no extra text):
-{{
-    "question": "हिंदी में प्रश्न | Question in English",
-    "options": [
-        "हिंदी विकल्प A | English Option A",
-        "हिंदी विकल्प B | English Option B",
-        "हिंदी विकल्प C | English Option C",
-        "हिंदी विकल्प D | English Option D"
-    ],
-    "correct": 0,
-    "explanation": "हिंदी में व्याख्या (तथ्यों के साथ) | Explanation in English (with facts)"
-}}
-
-Remember: Include YEAR/DATE in explanation if relevant. Make it FACTUALLY ACCURATE!"""
-        
-        # Try with maximum randomness
-        for attempt in range(10):  # 10 attempts
-            try:
-                logger.info(f"🤖 AI Generating {subject} question - Attempt {attempt + 1}/10")
-                
-                # Generate with high temperature for maximum creativity
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=1.5,  # MAXIMUM randomness
-                        top_p=0.98,
-                        top_k=64,
-                        max_output_tokens=1024,
-                    )
+            response = await asyncio.to_thread(
+                model.generate_content,
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.9,
+                    top_p=0.95,
+                    top_k=40,
+                    max_output_tokens=800,
                 )
-                
-                text = response.text.strip()
-                logger.info(f"AI Response received: {text[:100]}...")
-                
-                # Extract JSON
-                if "```json" in text:
-                    text = text.split("```json")[1].split("```")[0].strip()
-                elif "```" in text:
-                    text = text.split("```")[1].split("```")[0].strip()
-                
-                # Try to find JSON in text
-                if "{" in text and "}" in text:
-                    json_start = text.find("{")
-                    json_end = text.rfind("}") + 1
-                    text = text[json_start:json_end]
-                
-                data = json.loads(text)
-                
-                # Validate structure
-                required_keys = ["question", "options", "correct", "explanation"]
-                if all(k in data for k in required_keys):
-                    if isinstance(data["options"], list) and len(data["options"]) == 4:
-                        if isinstance(data["correct"], int) and 0 <= data["correct"] <= 3:
-                            logger.info(f"✅ Successfully generated {subject} question!")
-                            return data
-                
-                logger.warning(f"⚠️ Invalid structure, retrying...")
-                time.sleep(0.3)  # Small delay
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ JSON error: {e}")
-                time.sleep(0.5)
-            except Exception as e:
-                logger.error(f"❌ Error: {e}")
-                time.sleep(0.5)
+            )
+            
+            if response and response.text:
+                logger.info(f"✅ Got response: {response.text[:100]}...")
+                return response.text
+            
+            logger.warning(f"⚠️ Empty response on attempt {attempt + 1}")
+            await asyncio.sleep(2)
+            
+        except Exception as e:
+            logger.error(f"❌ Error on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(3)
+            else:
+                raise
+    
+    return None
+
+async def generate_question(subject, user_id):
+    """Generate question using Gemini AI"""
+    
+    random_num = random.randint(1000, 9999)
+    topic = random.choice(ENGLISH_TOPICS if subject == "English" else GK_TOPICS)
+    
+    if subject == "English":
+        prompt = f"""Create 1 SSC CGL/CHSL English question about {topic}.
+
+Question must be moderately challenging, real exam level.
+
+Return ONLY this JSON format (no other text):
+{{
+    "question": "Your question here",
+    "options": ["A option", "B option", "C option", "D option"],
+    "correct": 0,
+    "explanation": "Why this answer is correct"
+}}
+
+Topic: {topic}
+ID: {random_num}"""
+    
+    else:  # GK
+        prompt = f"""Create 1 SSC CGL/CHSL GK question about {topic} in BILINGUAL format (Hindi | English).
+
+Question must be factual, moderately challenging, real exam level.
+
+Return ONLY this JSON format (no other text):
+{{
+    "question": "हिंदी प्रश्न | English question",
+    "options": ["हिंदी A | English A", "हिंदी B | English B", "हिंदी C | English C", "हिंदी D | English D"],
+    "correct": 0,
+    "explanation": "हिंदी व्याख्या | English explanation"
+}}
+
+Topic: {topic}
+ID: {random_num}"""
+    
+    try:
+        text = await generate_with_retry(prompt)
         
-        # If all 10 attempts fail, show error message
-        logger.error("❌ Failed to generate question after 10 attempts")
-        return {
-            "question": "⚠️ Unable to generate question. Please try again.",
-            "options": ["Try Again", "Try Again", "Try Again", "Try Again"],
-            "correct": 0,
-            "explanation": "AI couldn't generate a question. Click 'Next Question' to try again."
-        }
+        if not text:
+            logger.error("❌ No response from AI")
+            return None
+        
+        # Clean and parse JSON
+        cleaned = clean_json_response(text)
+        data = json.loads(cleaned)
+        
+        # Validate
+        if all(k in data for k in ["question", "options", "correct", "explanation"]):
+            if len(data["options"]) == 4 and 0 <= data["correct"] <= 3:
+                logger.info(f"✅ Valid question generated: {data['question'][:50]}...")
+                return data
+        
+        logger.error(f"❌ Invalid question structure: {data}")
+        return None
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON parse error: {e}")
+        logger.error(f"Response was: {cleaned[:200]}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Generation error: {e}")
+        return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
     keyboard = [
         [InlineKeyboardButton("📚 English", callback_data='subject_English')],
-        [InlineKeyboardButton("🌍 GK (General Knowledge)", callback_data='subject_GK')]
+        [InlineKeyboardButton("🌍 GK", callback_data='subject_GK')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    welcome_text = """🎓 *Welcome to SSC CGL/CHSL Test Bot!*
+    text = """🎓 *SSC CGL/CHSL Quiz Bot*
 
-🤖 100% AI-Powered Questions by Gemini!
+🤖 AI-Powered by Gemini
+📝 Real exam level questions
+🔄 Fresh questions every time
 
-✨ Features:
-• Every question generated fresh by AI
-• Real SSC exam difficulty
-• Never repeating questions
-• Detailed explanations
-
-Select a subject to start:"""
+Select subject:"""
     
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode='Markdown')
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -241,94 +205,116 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == 'back_to_menu':
         keyboard = [
             [InlineKeyboardButton("📚 English", callback_data='subject_English')],
-            [InlineKeyboardButton("🌍 GK (General Knowledge)", callback_data='subject_GK')]
+            [InlineKeyboardButton("🌍 GK", callback_data='subject_GK')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         if user_id in user_sessions:
             score = user_sessions[user_id]['score']
             total = user_sessions[user_id]['total']
-            text = f"📊 Your Score: {score}/{total}\n\n🎓 Select a subject to continue:"
+            text = f"📊 Score: {score}/{total}\n\nSelect subject:"
         else:
-            text = "🎓 Select a subject to start:"
+            text = "Select subject:"
         
         await query.edit_message_text(text, reply_markup=reply_markup)
 
 async def send_question(query, user_id, subject):
     try:
-        await query.edit_message_text("⏳ AI is generating a NEW question...\n\n🤖 Gemini is thinking...\n\n⚡ Please wait...")
+        await query.edit_message_text(
+            "⏳ Generating question...\n\n🤖 AI is thinking...\n\n"
+            "This may take 5-10 seconds..."
+        )
         
-        # Generate 100% AI question
-        question_data = QuizGenerator.generate_question(subject, user_id)
+        question_data = await generate_question(subject, user_id)
+        
+        if not question_data:
+            keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data='next_question')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "⚠️ Unable to generate question.\n\n"
+                "This could be due to:\n"
+                "• API rate limits\n"
+                "• Network issues\n\n"
+                "Please try again in a moment.",
+                reply_markup=reply_markup
+            )
+            return
+        
         user_sessions[user_id]['current_question'] = question_data
         
-        # Create option buttons
         keyboard = []
-        options_labels = ['A', 'B', 'C', 'D']
+        labels = ['A', 'B', 'C', 'D']
         for i, option in enumerate(question_data['options']):
-            keyboard.append([InlineKeyboardButton(f"{options_labels[i]}. {option}", callback_data=f'answer_{i}')])
+            keyboard.append([InlineKeyboardButton(
+                f"{labels[i]}. {option}", 
+                callback_data=f'answer_{i}'
+            )])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         question_text = f"❓ *Question:*\n\n{question_data['question']}"
         
-        await query.edit_message_text(question_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.edit_message_text(
+            question_text, 
+            reply_markup=reply_markup, 
+            parse_mode='Markdown'
+        )
     
     except Exception as e:
         logger.error(f"Error in send_question: {e}")
         keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data='next_question')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            "❌ Error generating question. Please try again.",
+            f"❌ Error: {str(e)[:100]}\n\nPlease try again.",
             reply_markup=reply_markup
         )
 
 async def check_answer(query, user_id, selected):
     try:
         if user_id not in user_sessions or 'current_question' not in user_sessions[user_id]:
-            await query.edit_message_text("⚠️ Session expired. Please /start again.")
+            await query.edit_message_text("⚠️ Session expired. /start again.")
             return
         
-        question_data = user_sessions[user_id]['current_question']
-        correct_index = question_data['correct']
+        q_data = user_sessions[user_id]['current_question']
+        correct = q_data['correct']
         user_sessions[user_id]['total'] += 1
         
-        options_labels = ['A', 'B', 'C', 'D']
+        labels = ['A', 'B', 'C', 'D']
         
-        if selected == correct_index:
+        if selected == correct:
             user_sessions[user_id]['score'] += 1
-            result_text = f"✅ *Correct Answer!*\n\n"
+            result = "✅ *Correct!*\n\n"
         else:
-            result_text = f"❌ *Wrong Answer!*\n\n"
-            result_text += f"You selected: *{options_labels[selected]}. {question_data['options'][selected]}*\n\n"
+            result = f"❌ *Wrong!*\n\nYou selected: {labels[selected]}. {q_data['options'][selected]}\n\n"
         
-        result_text += f"✔️ Correct Answer: *{options_labels[correct_index]}. {question_data['options'][correct_index]}*\n\n"
-        result_text += f"💡 *Explanation:*\n{question_data['explanation']}\n\n"
-        result_text += f"📊 Score: {user_sessions[user_id]['score']}/{user_sessions[user_id]['total']}"
+        result += f"✔️ Answer: *{labels[correct]}. {q_data['options'][correct]}*\n\n"
+        result += f"💡 {q_data['explanation']}\n\n"
+        result += f"📊 Score: {user_sessions[user_id]['score']}/{user_sessions[user_id]['total']}"
         
         keyboard = [
-            [InlineKeyboardButton("➡️ Next Question", callback_data='next_question')],
-            [InlineKeyboardButton("🏠 Back to Menu", callback_data='back_to_menu')]
+            [InlineKeyboardButton("➡️ Next", callback_data='next_question')],
+            [InlineKeyboardButton("🏠 Menu", callback_data='back_to_menu')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.edit_message_text(result_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await query.edit_message_text(result, reply_markup=reply_markup, parse_mode='Markdown')
     
     except Exception as e:
         logger.error(f"Error in check_answer: {e}")
-        await query.edit_message_text("❌ Error processing answer. Please try /start again.")
+        await query.edit_message_text(f"❌ Error: {str(e)}")
 
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is alive! 100% AI-powered by Gemini!")
+    await update.message.reply_text("✅ Bot is alive and connected to Gemini AI!")
 
 def main():
-    logger.info("🚀 Starting PURE AI SSC Quiz Bot - 100% Gemini Generated!")
+    logger.info("🚀 Starting SSC Quiz Bot...")
+    logger.info(f"🔑 Using Gemini API Key: {GEMINI_API_KEY[:20]}...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("health", health_check))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    logger.info("✅ Bot ready! All questions generated by Gemini AI!")
+    logger.info("✅ Bot is ready!")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == '__main__':
