@@ -5,8 +5,8 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 import google.generativeai as genai
 import json
 import random
-import hashlib
 import time
+from datetime import datetime
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -25,68 +25,104 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 user_sessions = {}
-asked_questions = {}  # Track asked questions per user
+
+# Topic pools for variety
+ENGLISH_TOPICS = [
+    "Fill in the blanks with appropriate preposition",
+    "Identify grammatical error in sentence",
+    "Choose correct synonym",
+    "Choose correct antonym", 
+    "Idioms and phrases meaning",
+    "One word substitution",
+    "Sentence improvement",
+    "Active and passive voice conversion",
+    "Direct and indirect speech",
+    "Spellings - identify correct spelling",
+    "Sentence rearrangement",
+    "Cloze test",
+    "Reading comprehension based question",
+    "Para jumbles"
+]
+
+GK_TOPICS = [
+    "Indian Freedom Struggle and Freedom Fighters",
+    "Ancient Indian History - Mauryan, Gupta dynasty",
+    "Medieval Indian History - Mughal Empire",
+    "Modern Indian History - British Era",
+    "Indian Geography - Rivers, Mountains, States",
+    "World Geography - Countries, Capitals, Continents",
+    "Indian Polity - Constitution, Fundamental Rights",
+    "Indian Economy - GDP, Budget, Banking, RBI",
+    "General Science - Physics concepts",
+    "General Science - Chemistry concepts",
+    "General Science - Biology and Human body",
+    "Indian Art and Culture",
+    "Books and Authors - Indian",
+    "Important Awards - Bharat Ratna, Nobel Prize",
+    "Sports - Olympics, Cricket, Commonwealth Games",
+    "Important Days and Dates",
+    "Current Affairs - Last 6 months events",
+    "Famous Personalities of India",
+    "World Organizations - UN, WHO, UNESCO",
+    "Indian States - Capitals, CMs, Governors"
+]
 
 class QuizGenerator:
     @staticmethod
     def generate_question(subject, user_id):
-        """Generate unique questions for each user"""
-        max_retries = 5
+        """Generate 100% AI questions - NO hardcoded fallbacks"""
         
-        # Get user's question history
-        if user_id not in asked_questions:
-            asked_questions[user_id] = set()
-        
-        # Add randomness to prompt
+        # Add extreme randomness
         timestamp = int(time.time())
-        random_seed = random.randint(1000, 9999)
+        random_number = random.randint(10000, 99999)
+        current_date = datetime.now().strftime("%Y%m%d%H%M%S")
         
-        prompts = {
-            "English": f"""You are an SSC CGL/CHSL exam expert. Generate 1 UNIQUE and CHALLENGING English question.
+        # Pick random topic for variety
+        if subject == "English":
+            random_topic = random.choice(ENGLISH_TOPICS)
+            
+            prompt = f"""You are an expert SSC CGL/CHSL English exam question creator.
 
-IMPORTANT: Question ID {timestamp}{random_seed} - Make this completely different from previous questions.
+CRITICAL INSTRUCTIONS:
+- Generate a COMPLETELY NEW and UNIQUE question
+- Question ID: {current_date}{random_number}
+- Topic: {random_topic}
+- Difficulty: SSC CGL Tier-1 level (Moderately Challenging)
+- Make it different from typical questions
+- Use varied sentence structures
+- Include contemporary examples
 
-Focus areas (pick ONE randomly):
-- Advanced Grammar (Subject-Verb Agreement, Tenses, Voice, Narration)
-- Vocabulary (Difficult Synonyms, Antonyms, One-word substitution)
-- Idioms & Phrases (Common SSC idioms)
-- Sentence Improvement/Error Detection
-- Fill in the Blanks (Contextual usage)
-- Cloze Test/Comprehension
+Generate question on: {random_topic}
 
-Difficulty: SSC CGL/CHSL Tier-1 level (Moderately Hard)
-
-Generate in EXACT JSON format:
+Return ONLY valid JSON in this EXACT format (no extra text):
 {{
-    "question": "Your challenging SSC-level question here",
+    "question": "Your unique challenging question here",
     "options": ["Option A", "Option B", "Option C", "Option D"],
     "correct": 0,
-    "explanation": "Detailed explanation with grammar rules/reasoning"
+    "explanation": "Clear explanation with grammar rules/reasoning"
 }}
 
-Make it challenging but fair. No easy questions!""",
+Remember: Make it CHALLENGING but FAIR. Real SSC exam level!"""
+        
+        else:  # GK
+            random_topic = random.choice(GK_TOPICS)
             
-            "GK": f"""You are an SSC CGL/CHSL exam expert. Generate 1 UNIQUE General Knowledge question in BILINGUAL format.
+            prompt = f"""You are an expert SSC CGL/CHSL General Knowledge exam question creator.
 
-IMPORTANT: Question ID {timestamp}{random_seed} - Make this completely different from previous questions.
+CRITICAL INSTRUCTIONS:
+- Generate a COMPLETELY NEW and UNIQUE question
+- Question ID: {current_date}{random_number}
+- Topic: {random_topic}
+- Difficulty: SSC CGL Tier-1 level (Moderately Challenging)
+- Make it BILINGUAL (Hindi | English)
+- Include specific facts, years, numbers
+- Use recent/updated information
 
-Topics (pick ONE randomly):
-- Indian History (Freedom Struggle, Ancient/Medieval/Modern India)
-- Indian Geography (Rivers, Mountains, States, Capitals)
-- Indian Polity & Governance (Constitution, President, PM, Parliament)
-- Indian Economy (Budget, GDP, Banking, Currency)
-- General Science (Physics, Chemistry, Biology basics)
-- Current Affairs (Recent 6 months)
-- Books & Authors (Indian)
-- National & International Awards
-- Sports (Olympics, Cricket, Recent tournaments)
-- Important Days & Dates
+Generate question on: {random_topic}
 
-Difficulty: SSC CGL/CHSL Tier-1 level (Moderately Hard)
-
-Generate in EXACT JSON format with BILINGUAL content (Hindi | English):
+Return ONLY valid JSON in this EXACT format (no extra text):
 {{
-    "question": "हिंदी में चुनौतीपूर्ण सवाल | Challenging question in English",
+    "question": "हिंदी में प्रश्न | Question in English",
     "options": [
         "हिंदी विकल्प A | English Option A",
         "हिंदी विकल्प B | English Option B",
@@ -94,154 +130,73 @@ Generate in EXACT JSON format with BILINGUAL content (Hindi | English):
         "हिंदी विकल्प D | English Option D"
     ],
     "correct": 0,
-    "explanation": "हिंदी में विस्तृत व्याख्या | Detailed explanation in English"
+    "explanation": "हिंदी में व्याख्या (तथ्यों के साथ) | Explanation in English (with facts)"
 }}
 
-Make it factually accurate, challenging but fair. Include year/date in explanation if relevant!"""
-        }
+Remember: Include YEAR/DATE in explanation if relevant. Make it FACTUALLY ACCURATE!"""
         
-        for attempt in range(max_retries):
+        # Try with maximum randomness
+        for attempt in range(10):  # 10 attempts
             try:
-                logger.info(f"Generating question attempt {attempt + 1}/{max_retries}")
+                logger.info(f"🤖 AI Generating {subject} question - Attempt {attempt + 1}/10")
                 
-                # Generate with temperature for more randomness
+                # Generate with high temperature for maximum creativity
                 response = model.generate_content(
-                    prompts.get(subject, prompts["GK"]),
+                    prompt,
                     generation_config=genai.types.GenerationConfig(
-                        temperature=1.0,  # Higher temperature = more creative/random
-                        top_p=0.95,
-                        top_k=40,
+                        temperature=1.5,  # MAXIMUM randomness
+                        top_p=0.98,
+                        top_k=64,
+                        max_output_tokens=1024,
                     )
                 )
                 
                 text = response.text.strip()
+                logger.info(f"AI Response received: {text[:100]}...")
                 
-                # Clean JSON
+                # Extract JSON
                 if "```json" in text:
                     text = text.split("```json")[1].split("```")[0].strip()
                 elif "```" in text:
                     text = text.split("```")[1].split("```")[0].strip()
                 
+                # Try to find JSON in text
+                if "{" in text and "}" in text:
+                    json_start = text.find("{")
+                    json_end = text.rfind("}") + 1
+                    text = text[json_start:json_end]
+                
                 data = json.loads(text)
                 
                 # Validate structure
-                if all(k in data for k in ["question", "options", "correct", "explanation"]):
+                required_keys = ["question", "options", "correct", "explanation"]
+                if all(k in data for k in required_keys):
                     if isinstance(data["options"], list) and len(data["options"]) == 4:
                         if isinstance(data["correct"], int) and 0 <= data["correct"] <= 3:
-                            # Check if question is unique
-                            question_hash = hashlib.md5(data["question"].encode()).hexdigest()
-                            
-                            if question_hash not in asked_questions[user_id]:
-                                asked_questions[user_id].add(question_hash)
-                                logger.info(f"✅ Generated unique {subject} question")
-                                
-                                # Limit history to last 100 questions per user
-                                if len(asked_questions[user_id]) > 100:
-                                    asked_questions[user_id] = set(list(asked_questions[user_id])[-100:])
-                                
-                                return data
-                            else:
-                                logger.warning(f"Duplicate question detected, retry {attempt + 1}")
-                                continue
+                            logger.info(f"✅ Successfully generated {subject} question!")
+                            return data
                 
-                logger.warning(f"Invalid structure on attempt {attempt + 1}")
+                logger.warning(f"⚠️ Invalid structure, retrying...")
+                time.sleep(0.3)  # Small delay
                 
             except json.JSONDecodeError as e:
-                logger.error(f"JSON decode error on attempt {attempt + 1}: {e}")
-                time.sleep(0.5)  # Small delay before retry
+                logger.error(f"❌ JSON error: {e}")
+                time.sleep(0.5)
             except Exception as e:
-                logger.error(f"Error on attempt {attempt + 1}: {e}")
+                logger.error(f"❌ Error: {e}")
                 time.sleep(0.5)
         
-        # Fallback questions - Large pool to avoid repeats
-        logger.warning("Using fallback question")
-        if subject == "GK":
-            fallback = [
-                {
-                    "question": "भारत के प्रथम राष्ट्रपति कौन थे? | Who was the first President of India?",
-                    "options": ["डॉ. राजेंद्र प्रसाद | Dr. Rajendra Prasad", "सर्वपल्ली राधाकृष्णन | Sarvepalli Radhakrishnan", "जाकिर हुसैन | Zakir Husain", "वी.वी. गिरि | V.V. Giri"],
-                    "correct": 0,
-                    "explanation": "डॉ. राजेंद्र प्रसाद भारत के प्रथम राष्ट्रपति थे (1950-1962)। | Dr. Rajendra Prasad was the first President of India (1950-1962)."
-                },
-                {
-                    "question": "भारतीय संविधान कब लागू हुआ? | When did the Indian Constitution come into effect?",
-                    "options": ["15 अगस्त 1947 | 15 August 1947", "26 जनवरी 1950 | 26 January 1950", "26 नवंबर 1949 | 26 November 1949", "2 अक्टूबर 1947 | 2 October 1947"],
-                    "correct": 1,
-                    "explanation": "भारतीय संविधान 26 जनवरी 1950 को लागू हुआ। इसी दिन को गणतंत्र दिवस मनाया जाता है। | The Indian Constitution came into effect on 26 January 1950. This day is celebrated as Republic Day."
-                },
-                {
-                    "question": "भारत में सबसे लंबी नदी कौन सी है? | Which is the longest river in India?",
-                    "options": ["यमुना | Yamuna", "गोदावरी | Godavari", "गंगा | Ganga", "ब्रह्मपुत्र | Brahmaputra"],
-                    "correct": 2,
-                    "explanation": "गंगा भारत की सबसे लंबी नदी है जिसकी लंबाई 2525 किमी है। | Ganga is the longest river in India with a length of 2525 km."
-                },
-                {
-                    "question": "भारत का राष्ट्रीय पशु क्या है? | What is the national animal of India?",
-                    "options": ["शेर | Lion", "हाथी | Elephant", "बाघ | Tiger", "तेंदुआ | Leopard"],
-                    "correct": 2,
-                    "explanation": "बाघ (रॉयल बंगाल टाइगर) भारत का राष्ट्रीय पशु है। | Tiger (Royal Bengal Tiger) is the national animal of India."
-                },
-                {
-                    "question": "भारत में कुल कितने राज्य हैं? | How many states are there in India?",
-                    "options": ["27 | 27", "28 | 28", "29 | 29", "30 | 30"],
-                    "correct": 1,
-                    "explanation": "भारत में वर्तमान में 28 राज्य और 8 केंद्र शासित प्रदेश हैं। | India currently has 28 states and 8 union territories."
-                },
-                {
-                    "question": "भारत का सबसे बड़ा राज्य (क्षेत्रफल में) कौन सा है? | Which is the largest state in India by area?",
-                    "options": ["महाराष्ट्र | Maharashtra", "राजस्थान | Rajasthan", "मध्य प्रदेश | Madhya Pradesh", "उत्तर प्रदेश | Uttar Pradesh"],
-                    "correct": 1,
-                    "explanation": "राजस्थान भारत का सबसे बड़ा राज्य है जिसका क्षेत्रफल 3,42,239 वर्ग किमी है। | Rajasthan is the largest state in India with an area of 3,42,239 sq km."
-                }
-            ]
-            return random.choice(fallback)
-        else:
-            fallback = [
-                {
-                    "question": "Choose the correctly spelled word:",
-                    "options": ["Embarrassment", "Embarassment", "Embarrasment", "Embarasment"],
-                    "correct": 0,
-                    "explanation": "'Embarrassment' is the correct spelling with double 'r' and double 's'. It means a feeling of self-consciousness or shame."
-                },
-                {
-                    "question": "Find the antonym of 'INDIGENOUS':",
-                    "options": ["Native", "Local", "Foreign", "Aboriginal"],
-                    "correct": 2,
-                    "explanation": "'Foreign' is the antonym of 'Indigenous'. Indigenous means native or originating from a particular place, while foreign means from another country."
-                },
-                {
-                    "question": "Choose the correct idiom meaning 'To reveal a secret':",
-                    "options": ["Spill the beans", "Beat around the bush", "Piece of cake", "Break the ice"],
-                    "correct": 0,
-                    "explanation": "'Spill the beans' means to reveal a secret or disclose information that was meant to be kept confidential."
-                },
-                {
-                    "question": "Identify the error: 'Each of the students have submitted their assignments.'",
-                    "options": ["No error", "Error in 'have'", "Error in 'their'", "Error in 'submitted'"],
-                    "correct": 1,
-                    "explanation": "The error is in 'have'. It should be 'has' because 'each' is a singular subject and requires a singular verb."
-                },
-                {
-                    "question": "Fill in the blank: He was _____ by the news of his success.",
-                    "options": ["overwhelmed", "overcome", "overtaken", "overjoyed"],
-                    "correct": 3,
-                    "explanation": "'Overjoyed' is the most appropriate word meaning extremely happy. While 'overwhelmed' could work, 'overjoyed' specifically means filled with great joy."
-                },
-                {
-                    "question": "Find the synonym of 'METICULOUS':",
-                    "options": ["Careless", "Precise", "Rough", "Hasty"],
-                    "correct": 1,
-                    "explanation": "'Precise' is a synonym of 'Meticulous'. Both mean showing great attention to detail and being very careful and exact."
-                }
-            ]
-            return random.choice(fallback)
+        # If all 10 attempts fail, show error message
+        logger.error("❌ Failed to generate question after 10 attempts")
+        return {
+            "question": "⚠️ Unable to generate question. Please try again.",
+            "options": ["Try Again", "Try Again", "Try Again", "Try Again"],
+            "correct": 0,
+            "explanation": "AI couldn't generate a question. Click 'Next Question' to try again."
+        }
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Initialize user's question history
-    if user_id not in asked_questions:
-        asked_questions[user_id] = set()
     
     keyboard = [
         [InlineKeyboardButton("📚 English", callback_data='subject_English')],
@@ -251,13 +206,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome_text = """🎓 *Welcome to SSC CGL/CHSL Test Bot!*
 
-AI-powered with UNIQUE questions every time!
+🤖 100% AI-Powered Questions by Gemini!
 
 ✨ Features:
-• Unlimited NEW questions (No repeats!)
+• Every question generated fresh by AI
 • Real SSC exam difficulty
+• Never repeating questions
 • Detailed explanations
-• Score tracking
 
 Select a subject to start:"""
     
@@ -293,7 +248,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in user_sessions:
             score = user_sessions[user_id]['score']
             total = user_sessions[user_id]['total']
-            text = f"�� Your Score: {score}/{total}\n\n🎓 Select a subject to continue:"
+            text = f"📊 Your Score: {score}/{total}\n\n🎓 Select a subject to continue:"
         else:
             text = "🎓 Select a subject to start:"
         
@@ -301,9 +256,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_question(query, user_id, subject):
     try:
-        await query.edit_message_text("⏳ Generating NEW SSC-level question...\n\n🤖 AI is thinking...")
+        await query.edit_message_text("⏳ AI is generating a NEW question...\n\n🤖 Gemini is thinking...\n\n⚡ Please wait...")
         
-        # Generate unique question for this user
+        # Generate 100% AI question
         question_data = QuizGenerator.generate_question(subject, user_id)
         user_sessions[user_id]['current_question'] = question_data
         
@@ -317,9 +272,15 @@ async def send_question(query, user_id, subject):
         question_text = f"❓ *Question:*\n\n{question_data['question']}"
         
         await query.edit_message_text(question_text, reply_markup=reply_markup, parse_mode='Markdown')
+    
     except Exception as e:
         logger.error(f"Error in send_question: {e}")
-        await query.edit_message_text("❌ Error generating question. Please try again.")
+        keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data='next_question')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "❌ Error generating question. Please try again.",
+            reply_markup=reply_markup
+        )
 
 async def check_answer(query, user_id, selected):
     try:
@@ -351,22 +312,23 @@ async def check_answer(query, user_id, selected):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(result_text, reply_markup=reply_markup, parse_mode='Markdown')
+    
     except Exception as e:
         logger.error(f"Error in check_answer: {e}")
-        await query.edit_message_text("❌ Error processing answer. Please try again.")
+        await query.edit_message_text("❌ Error processing answer. Please try /start again.")
 
 async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is alive and generating unique questions!")
+    await update.message.reply_text("✅ Bot is alive! 100% AI-powered by Gemini!")
 
 def main():
-    logger.info("🚀 Starting SSC Quiz Bot with NO REPEAT questions...")
+    logger.info("🚀 Starting PURE AI SSC Quiz Bot - 100% Gemini Generated!")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("health", health_check))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    logger.info("✅ Bot is ready! Generating unique questions...")
+    logger.info("✅ Bot ready! All questions generated by Gemini AI!")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == '__main__':
