@@ -6,11 +6,19 @@ import google.generativeai as genai
 import json
 import random
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+if not GEMINI_API_KEY or not TELEGRAM_TOKEN:
+    logger.error("❌ Environment variables missing!")
+    logger.error("Set TELEGRAM_BOT_TOKEN and GEMINI_API_KEY")
+    exit(1)
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
@@ -68,6 +76,7 @@ Make it SSC exam level - factual, precise, and educational."""
                 if all(k in data for k in ["question", "options", "correct", "explanation"]):
                     if isinstance(data["options"], list) and len(data["options"]) == 4:
                         if isinstance(data["correct"], int) and 0 <= data["correct"] <= 3:
+                            logger.info(f"✅ Generated {subject} question")
                             return data
                 
                 logger.warning(f"Invalid structure on attempt {attempt + 1}")
@@ -77,6 +86,7 @@ Make it SSC exam level - factual, precise, and educational."""
             except Exception as e:
                 logger.error(f"Error on attempt {attempt + 1}: {e}")
         
+        logger.warning("Using fallback question")
         if subject == "GK":
             fallback = [
                 {
@@ -89,13 +99,13 @@ Make it SSC exam level - factual, precise, and educational."""
                     "question": "भारत की राजधानी क्या है? | What is the capital of India?",
                     "options": ["मुंबई | Mumbai", "नई दिल्ली | New Delhi", "कोलकाता | Kolkata", "चेन्नई | Chennai"],
                     "correct": 1,
-                    "explanation": "नई दिल्ली भारत की राजधानी है। | New Delhi is the capital of India."
+                    "explanation": "नई दिल्ली भारत की राजधानी है और यह दिल्ली केंद्र शासित प्रदेश में स्थित है। | New Delhi is the capital of India and is located in the National Capital Territory of Delhi."
                 },
                 {
-                    "question": "भारत में कितने राज्य हैं? | How many states are there in India?",
-                    "options": ["27 | 27", "28 | 28", "29 | 29", "30 | 30"],
+                    "question": "भारतीय संविधान कब लागू हुआ? | When did the Indian Constitution come into effect?",
+                    "options": ["15 अगस्त 1947 | 15 August 1947", "26 जनवरी 1950 | 26 January 1950", "26 नवंबर 1949 | 26 November 1949", "2 अक्टूबर 1947 | 2 October 1947"],
                     "correct": 1,
-                    "explanation": "भारत में 28 राज्य और 8 केंद्र शासित प्रदेश हैं। | India has 28 states and 8 union territories."
+                    "explanation": "भारतीय संविधान 26 जनवरी 1950 को लागू हुआ था। इसी दिन को हम गणतंत्र दिवस के रूप में मनाते हैं। | The Indian Constitution came into effect on 26 January 1950. We celebrate this day as Republic Day."
                 }
             ]
             return random.choice(fallback)
@@ -105,13 +115,13 @@ Make it SSC exam level - factual, precise, and educational."""
                     "question": "Choose the correctly spelled word:",
                     "options": ["Occassion", "Occasion", "Ocassion", "Ocasion"],
                     "correct": 1,
-                    "explanation": "'Occasion' is the correct spelling with double 'c' and single 's'."
+                    "explanation": "'Occasion' is the correct spelling with double 'c' and single 's'. It means a particular event or time."
                 },
                 {
                     "question": "Find the synonym of 'ABUNDANT':",
                     "options": ["Scarce", "Plentiful", "Rare", "Limited"],
                     "correct": 1,
-                    "explanation": "'Plentiful' means existing in large quantities, same as 'Abundant'."
+                    "explanation": "'Plentiful' means existing in large quantities, which is the same as 'Abundant'."
                 },
                 {
                     "question": "Choose the correct form: He _____ to school every day.",
@@ -129,7 +139,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    welcome_text = """�� *Welcome to SSC CGL/CHSL Test Bot!*
+    welcome_text = """🎓 *Welcome to SSC CGL/CHSL Test Bot!*
 
 Make learning easy with AI-powered questions!
 
@@ -175,7 +185,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total = user_sessions[user_id]['total']
             text = f"📊 Your Score: {score}/{total}\n\n🎓 Select a subject to continue:"
         else:
-            text = "🎓 Select a subject to start:"
+            text = "�� Select a subject to start:"
         
         await query.edit_message_text(text, reply_markup=reply_markup)
 
@@ -229,17 +239,15 @@ async def health_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot is alive and running!")
 
 def main():
-    if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-        logger.error("Missing environment variables!")
-        return
+    logger.info("🚀 Starting SSC Quiz Bot...")
     
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("health", health_check))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    logger.info("SSC Quiz Bot is starting...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("✅ Bot is ready and listening!")
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()

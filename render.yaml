@@ -1,13 +1,14 @@
 services:
   - type: web
     name: ssc-quiz-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run.py
+    env: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: ./
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: PORT
-        value: 8080
+    healthCheckPath: /health

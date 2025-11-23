@@ -1,4 +1,4 @@
-__pycache__/
+__pycache__
 *.pyc
 *.pyo
 *.pyd
@@ -8,5 +8,7 @@ venv/
 .env
 *.log
 .DS_Store
-*.swp
-*.swo
+.git
+.gitignore
+README.md
+*.md
